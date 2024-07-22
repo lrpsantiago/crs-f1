@@ -1,12 +1,8 @@
-
 private readonly string TEAM_TAG = "XXX";                               //Your Team Tag (3 chracters), if you are not in a team yet, keep this as it is.
 private readonly string DRIVER_NAME = "Guest";                          //Your name
 private readonly int DRIVER_NUMBER = 99;                                //Your number (0-99)
-private const float DEFAULT_SUSPENSION_STRENGTH_F = 20f;                //Setup your default front suspensions strength
-private const float DEFAULT_SUSPENSION_STRENGTH_R = 20f;                //Setup your default rear suspensions strength
 private const string DISPLAY_NAME = "Driver LCD";
 private const string BRAKELIGHT_GROUP_NAME = "Brakelight";
-private const string DRS_LIGHTS_GROUP_NAME = "DRS Lights";
 private const string ERS_LIGHTS_GROUP_NAME = "ERS Lights";
 private const string DRAFTING_SENSOR_NAME = "Drafting Sensor";
 private const string MIRROR_SENSOR_RIGHT_NAME = "Mirror Sensor Right";
@@ -18,9 +14,9 @@ private const string RANK_DISPLAY_NAME = "Rank LCD";                    //Option
 private const string TEXT_DISPLAY_HUDLCD = "hudlcd:-0.7:-0.35:0.9:White:1";
 private const string RANK_DISPLAY_HUDLCD = "hudlcd:0.45:0.9:1:White:1";
     
-//************ DO NOT MODIFY BELLOW HERE ************
+//************ DO NOT MODIFY BELOW HERE ************
 
-private readonly string CODE_VERSION = "13.1.0";
+private readonly string CODE_VERSION = "13.2.0";
 private const int CONNECTION_TIMEOUT = 3000;
 private const int SAVE_STATE_COOLDOWN = 1000;
 private const int DRAFTING_COOLDOWN = 1000;
@@ -47,13 +43,11 @@ private IMySensorBlock _mirrorRight;
 private IMySensorBlock _mirrorLeft;
 private List<IMyGyro> _gyros;
 private bool _isPitLimiterActive;
-private bool _isDrsActive;
 private bool _isErsActive;
 private StringBuilder _stringBuilder;
 private RaceData _data;
 private List<IMyLightingBlock> _brakelights;
 private List<IMyLightingBlock> _ersLights;
-private List<IMyLightingBlock> _drsLights;
 private List<IMyLightingBlock> _tyreLights;
 private Tyre _currentTyres;
 private long _address = -1;
@@ -83,7 +77,6 @@ public Program()
         SetupDisplays();
         SetupBrakelights();
         SetupErsLights();
-        SetupDrsLights();
         SetupAntenna();
         SetupMirrors();
         LoadState();
@@ -159,7 +152,6 @@ public void Main(string argument, UpdateType updateSource)
     Echo($"Running CRS-F1 {CODE_VERSION}");
 
     HandleArgument(argument);
-    UpdateDrs();
     UpdateErs();
     UpdateFlagEffect();
     UpdatePitLimiter();
@@ -227,7 +219,6 @@ private void UpdateFlagEffect()
 
 private void UpdateYellowFlagEffect()
 {
-    _isDrsActive = false;
     _isErsActive = false;
     _mainController.HandBrake = _mainController.GetShipSpeed() > 50;
 
@@ -236,7 +227,6 @@ private void UpdateYellowFlagEffect()
 
 private void UpdateRedFlagEffect()
 {
-    _isDrsActive = false;
     _isErsActive = false;
     _isPitLimiterActive = false;
     _mainController.HandBrake = true;
@@ -297,8 +287,7 @@ private void UpdateDisplays()
     var strWeatherLevelSlider = BuildWeatherLevelSlider(_data.CurrentWeather);
     var strWeatherLine1 = $"DRY         WET";
     var strWeatherLine2 = CentralizeString(strWeather, INNER_DISPLAY_WIDTH);
-    var controlLine = (_isDrsActive ? "DRS" : "   ") + " " +
-        (_isErsActive ? "ERS" : "   ") + " " +
+    var controlLine = (_isErsActive ? "ERS" : "   ") + " " +
         (_isDrafting ? "DFT" : "   ") + " " +
         (_isPitLimiterActive ? "PIT" : "   ");
 
@@ -577,35 +566,6 @@ private void UpdatePitLimiter()
 
     var speed = _mainController.GetShipSpeed();
     _mainController.HandBrake = speed > 24;
-}
-
-private void UpdateDrs()
-{
-    var isBreaking = _mainController.MoveIndicator.Z > 0
-        || _mainController.MoveIndicator.Y > 0
-        || _mainController.HandBrake;
-
-    if (isBreaking)
-    {
-        _isDrsActive = false;
-    }
-
-    var fr = GetSuspension(SuspensionPosition.FrontRight);
-    var fl = GetSuspension(SuspensionPosition.FrontLeft);
-    var rr = GetSuspension(SuspensionPosition.RearRight);
-    var rl = GetSuspension(SuspensionPosition.RearLeft);
-    var rate = (!_isDrsActive ? -150f : 150f) * _delta;
-
-    fr.Strength = MathHelper.Clamp(fr.Strength + rate, DEFAULT_SUSPENSION_STRENGTH_F, 100);
-    fl.Strength = MathHelper.Clamp(fl.Strength + rate, DEFAULT_SUSPENSION_STRENGTH_F, 100);
-    rr.Strength = MathHelper.Clamp(rr.Strength + rate, DEFAULT_SUSPENSION_STRENGTH_R, 100);
-    rl.Strength = MathHelper.Clamp(rl.Strength + rate, DEFAULT_SUSPENSION_STRENGTH_R, 100);
-
-    foreach (var l in _drsLights)
-    {
-        l.Color = _isDrsActive ? Color.Blue : Color.Black;
-        l.Enabled = _isDrsActive;
-    }
 }
 
 private void UpdateErs()
@@ -901,26 +861,6 @@ private void SetupBrakelights()
     }
 }
 
-private void SetupDrsLights()
-{
-    _drsLights = new List<IMyLightingBlock>();
-    var lights = new List<IMyTerminalBlock>();
-    var group = GridTerminalSystem.GetBlockGroupWithName(DRS_LIGHTS_GROUP_NAME);
-
-    if (group == null)
-    {
-        return;
-    }
-
-    group.GetBlocks(lights, b => b.CubeGrid == Me.CubeGrid);
-
-    foreach (var l in lights)
-    {
-        var light = (IMyLightingBlock)l;
-        _drsLights.Add(light);
-    }
-}
-
 private void SetupErsLights()
 {
     _ersLights = new List<IMyLightingBlock>();
@@ -1053,24 +993,6 @@ private void HandleArgument(string argument)
     if (argument.Equals("LMT_OFF", StringComparison.InvariantCultureIgnoreCase))
     {
         _isPitLimiterActive = false;
-        return;
-    }
-
-    if (argument.Equals("DRS", StringComparison.InvariantCultureIgnoreCase))
-    {
-        _isDrsActive = !_isDrsActive;
-        return;
-    }
-
-    if (argument.Equals("DRS_ON", StringComparison.InvariantCultureIgnoreCase))
-    {
-        _isDrsActive = true;
-        return;
-    }
-
-    if (argument.Equals("DRS_OFF", StringComparison.InvariantCultureIgnoreCase))
-    {
-        _isDrsActive = false;
         return;
     }
 
